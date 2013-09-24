@@ -1,0 +1,31 @@
+#barra-top {
+    display: block;
+    position: fixed;
+    top: 130px;
+    width: 98%;
+    z-index: 5;
+}
+#barra-bottom {
+    bottom: 55px;
+    float: none;
+    position: fixed;
+    width: 98%;
+}body header {
+    position: fixed;
+    width: 95%;
+}
+table {
+    position: absolute;
+    top: 100px;
+}
+table thead {
+    position: fixed;
+}
+table thead th {
+    float: none;
+}
+table tbody {
+    position: absolute;
+    top: 25px;
+    z-index: -1;
+}

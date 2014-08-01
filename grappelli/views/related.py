@@ -2,6 +2,7 @@
 
 # PYTHON IMPORTS
 import operator
+from functools import reduce
 
 # DJANGO IMPORTS
 from django.http import HttpResponse
@@ -10,7 +11,7 @@ from django.db.models.query import QuerySet
 from django.views.decorators.cache import never_cache
 from django.views.generic import View
 from django.utils.translation import ungettext, ugettext as _
-from django.utils.encoding import smart_str
+from django.utils.encoding import smart_text
 from django.core.exceptions import PermissionDenied
 from django.contrib.admin.util import prepare_lookup_value
 
@@ -27,11 +28,16 @@ from grappelli.settings import AUTOCOMPLETE_LIMIT, AUTOCOMPLETE_SEARCH_FIELDS
 def get_label(f):
     if getattr(f, "related_label", None):
         return f.related_label()
-    return f.__unicode__()
+    return smart_text(f)
+
+
+def import_from(module, name):
+    module = __import__(module, fromlist=[name])
+    return getattr(module, name)
 
 
 def ajax_response(data):
-    return HttpResponse(json.dumps(data), mimetype='application/javascript')
+    return HttpResponse(json.dumps(data), content_type='application/javascript')
 
 
 class RelatedLookup(View):
@@ -48,8 +54,21 @@ class RelatedLookup(View):
         self.model = models.get_model(self.GET['app_label'], self.GET['model_name'])
         return self.model
 
+    def get_filtered_queryset(self, qs):
+        filters = {}
+        query_string = self.GET.get('query_string', None)
+
+        if query_string:
+            for item in query_string.split(":"):
+                k, v = item.split("=")
+                if k != "t":
+                    filters[smart_text(k)] = prepare_lookup_value(smart_text(k), smart_text(v))
+        return qs.filter(**filters)
+
     def get_queryset(self):
-        return self.model._default_manager.all()
+        qs = self.model._default_manager.get_queryset()
+        qs = self.get_filtered_queryset(qs)
+        return qs
 
     def get_data(self):
         obj_id = self.GET['object_id']
@@ -98,34 +117,32 @@ class AutocompleteLookup(RelatedLookup):
     def request_is_valid(self):
         return 'term' in self.GET and 'app_label' in self.GET and 'model_name' in self.GET
 
-    def get_filtered_queryset(self, qs):
-        filters = {}
-        query_string = self.GET.get('query_string', None)
-
-        if query_string:
-            for item in query_string.split("&"):
-                k, v = item.split("=")
-                if k != "t":
-                    filters[smart_str(k)] = prepare_lookup_value(smart_str(k), smart_str(v))
-        return qs.filter(**filters)
-
     def get_searched_queryset(self, qs):
         model = self.model
         term = self.GET["term"]
 
         try:
+            term = model.autocomplete_term_adjust(term)
+        except AttributeError:
+            pass
+
+        try:
             search_fields = model.autocomplete_search_fields()
         except AttributeError:
-            search_fields = AUTOCOMPLETE_SEARCH_FIELDS[model._meta.app_label][model._meta.module_name]
-        except KeyError:
-            search_fields = ()
+            try:
+                search_fields = AUTOCOMPLETE_SEARCH_FIELDS[model._meta.app_label][model._meta.module_name]
+            except KeyError:
+                search_fields = ()
 
-        for word in term.split():
-            search = [models.Q(**{smart_str(item): smart_str(word)}) for item in search_fields]
-            search_qs = QuerySet(model)
-            search_qs.dup_select_related(qs)
-            search_qs = search_qs.filter(reduce(operator.or_, search))
-            qs &= search_qs
+        if search_fields:
+            for word in term.split():
+                search = [models.Q(**{smart_text(item): smart_text(word)}) for item in search_fields]
+                search_qs = QuerySet(model)
+                search_qs.query.select_related = qs.query.select_related
+                search_qs = search_qs.filter(reduce(operator.or_, search))
+                qs &= search_qs
+        else:
+            qs = model.objects.none()
         return qs
 
     def get_queryset(self):
@@ -149,11 +166,6 @@ class AutocompleteLookup(RelatedLookup):
                 return ajax_response(data)
 
         # overcomplicated label translation
-        label = ungettext(
-            '%(counter)s result',
-            '%(counter)s results',
-        0) % {
-            'counter': 0,
-        }
+        label = ungettext('%(counter)s result', '%(counter)s results', 0) % {'counter': 0}
         data = [{"value": None, "label": label}]
         return ajax_response(data)

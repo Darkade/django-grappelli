@@ -9,6 +9,12 @@ try:
 except ImportError:
     from django.utils import simplejson as json
 
+try:
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+except ImportError:
+    from django.contrib.auth.models import User
+
 # django imports
 from django import template
 from django.contrib.contenttypes.models import ContentType
@@ -19,7 +25,7 @@ from django.template.loader import get_template
 from django.template.context import Context
 
 # grappelli imports
-from grappelli.settings import *
+from grappelli.settings import ADMIN_TITLE, ADMIN_URL, SWITCH_USER, SWITCH_USER_ORIGINAL, SWITCH_USER_TARGET, CLEAN_INPUT_TYPES
 
 register = template.Library()
 
@@ -90,6 +96,11 @@ def grappelli_admin_title():
     return ADMIN_TITLE
 
 
+@register.simple_tag
+def grappelli_clean_input_types():
+    return CLEAN_INPUT_TYPES
+
+
 @register.filter
 def classname(obj, arg=None):
     classname = obj.__class__.__name__.lower()
@@ -98,6 +109,13 @@ def classname(obj, arg=None):
             return True
         return False
     return classname
+
+
+@register.filter
+def classpath(obj):
+    module = obj.__module__
+    classname = obj.__class__.__name__
+    return "%s,%s" % (module, classname)
 
 
 # FORMSETSORT FOR SORTABLE INLINES
@@ -197,3 +215,22 @@ def admin_list_filter(cl, spec):
         'choices': list(spec.choices(cl)),
         'spec': spec,
     }))
+
+
+@register.simple_tag(takes_context=True)
+def switch_user_dropdown(context):
+    if SWITCH_USER:
+        tpl = get_template("admin/includes_grappelli/switch_user_dropdown.html")
+        request = context["request"]
+        session_user = request.session.get("original_user", {"id": request.user.id, "username": request.user.username})
+        try:
+            original_user = User.objects.get(pk=session_user["id"], is_staff=True)
+        except User.DoesNotExist:
+            return ""
+        if SWITCH_USER_ORIGINAL(original_user):
+            object_list = [user for user in User.objects.filter(is_staff=True).exclude(pk=original_user.pk) if SWITCH_USER_TARGET(original_user, user)]
+            return tpl.render(Context({
+                'request': request,
+                'object_list': object_list,
+            }))
+    return ""
